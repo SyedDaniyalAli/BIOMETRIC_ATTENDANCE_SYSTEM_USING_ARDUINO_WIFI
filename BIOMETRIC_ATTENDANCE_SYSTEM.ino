@@ -29,6 +29,16 @@ SoftwareSerial mySerial(12, 13); // 12 - D6 - yellow // 13 - d7 - blue
 
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 
+struct firebaseUser {
+
+  int ID;
+  String NAME;
+};
+
+firebaseUser firebase_user;
+
+String id;
+
 
 // One Time Code~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void setup()
@@ -62,29 +72,58 @@ void setup()
 // Repeating Code~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void loop()
 {
+  if (isDeviceActivated()) {
 
-  Serial.println("Enter ID"); // enter a new id for every new finger , it will be used for identification in future
-  int id = 0;
-  while (true) {
-    while (! Serial.available());    // to get the user id
-    char c = Serial.read();
-    if (! isdigit(c)) break;
-    id *= 10;
-    id += c - '0';
+    //TODO  Make Buzzer on for a second
+
+    firebase_user = getDataFromFirebase();
+
+    while (!  getFingerprintEnroll(firebase_user.ID) );
+
   }
-  Serial.print("Enrolling ID #");
-  Serial.println(id);
+  delay(2000);
 
-
-
-  while (!  getFingerprintEnroll(id) );
 }
 
+bool isDeviceActivated() {
 
+  // get value
+  String value = Firebase.getString("device/state");
+  id = Firebase.getString("device/id");
+  Serial.println("device/state" + String(value));
+  Serial.println("device/id" + String(value));
 
+  if (Firebase.failed())   // to find any error in uploading the code
+  {
+    Serial.print("Failed to get activation record:");
+    Serial.println(Firebase.error());
+  }
 
+  if (value == "true") {
+    return true;
+  }
+  else {
+    return false;
+  }
 
+}
 
+//Update status from firebase~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+struct firebaseUser getDataFromFirebase() {
+
+  firebase_user.ID = Firebase.getString("users/" + String(id) + "/f_id").toInt();
+  firebase_user.NAME = Firebase.getString("users/" + String(id) + "/name");
+
+  if (Firebase.failed())   // to find any error in uploading the code
+  {
+    Serial.print("Failed to get user record:");
+    Serial.println(Firebase.error());
+  }
+
+  return firebase_user;
+}
+
+//Finger print registration Code~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 uint8_t getFingerprintEnroll(int id) {
   uint8_t p = -1;
   Serial.println("Waiting for valid finger to enroll");
@@ -204,16 +243,7 @@ uint8_t getFingerprintEnroll(int id) {
   }
 
 
-  String Enroll = String("users") + String(id); // adding these two everytime creates a new child in fire base
-
-  Firebase.pushString("fingerprint database" , (Enroll)); // To get multiple entries in the database
-
-  if (Firebase.failed())   // to find any error in uploading the code
-  {
-    Serial.print("Failed to upload record:");
-    Serial.println(Firebase.error());
-  }
-  Serial.println("sent to online database");
+  acknowledgeToFirebase();
 
   p = finger.storeModel(id);
   if (p == FINGERPRINT_OK) {
@@ -233,6 +263,19 @@ uint8_t getFingerprintEnroll(int id) {
   }
 
 
+}
 
 
+void acknowledgeToFirebase(){
+
+   Firebase.setString("device/state", "false");
+   Firebase.setString("users/" + String(id) + "/f_id", String(firebase_user.ID)); // update child in firebase database
+
+  if (Firebase.failed())   // to find any error in uploading the code
+  {
+    Serial.print("Failed to upload record:");
+    Serial.println(Firebase.error());
+  }
+  Serial.println("sent to online database");
+  
 }
