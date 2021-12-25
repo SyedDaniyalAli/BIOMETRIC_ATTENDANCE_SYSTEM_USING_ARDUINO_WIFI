@@ -269,7 +269,7 @@ uint8_t getFingerprintEnroll(int id) {
 void acknowledgeToFirebase(){
 
    Firebase.setString("device/state", "false");
-   Firebase.setString("users/" + String(id) + "/f_id", String(firebase_user.ID)); // update child in firebase database
+   Firebase.setString("users/"+String(firebase_user.ID)+"/registration_status", String("true")); // update child in firebase database
 
   if (Firebase.failed())   // to find any error in uploading the code
   {
