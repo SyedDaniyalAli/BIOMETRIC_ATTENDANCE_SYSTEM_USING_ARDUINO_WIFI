@@ -1,31 +1,56 @@
-#include <FirebaseObject.h>
-#include <FirebaseCloudMessaging.h>
-#include <Firebase.h>
-#include <FirebaseError.h>
-#include <FirebaseArduino.h>
-#include <FirebaseHttpClient.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-#include <ESP8266WiFi.h>
-
-
-
 /*
    Finger print verification
    To send the the enrolled finger prints to fire base
    We can't extract the finger print image from the sensor as it gives output in bmp code formate
    We can save upto 1000 different fingers in the sensor.
 */
-
-#include <ESP8266WiFi.h>    //for node mcu
-#include <FirebaseArduino.h> // to connect node mcu and firebase
 #include <Adafruit_Fingerprint.h> // for connecting the fingerprint sensor 
 #include <SoftwareSerial.h> // for serial communication
 
-#define FIREBASE_HOST "biometric-attendance-systm-default-rtdb.firebaseio.com"  // app database
-#define FIREBASE_AUTH "bJhOeblIKLSUWKr1MKrbMV5sKbYB6wrwSq1El8TC" // copy the secret code from the service account settings in firebase
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <Arduino.h>
+#if defined(ESP32)
+#include <WiFi.h>
+#elif defined(ESP8266)
+#include <ESP8266WiFi.h>
+#endif
+#include <Firebase_ESP_Client.h>
+
+
+// Provide the token generation process info.
+#include "addons/TokenHelper.h"
+
+// Provide the RTDB payload printing info and other helper functions.
+#include "addons/RTDBHelper.h"
+
+
+// Insert Firebase project API Key
+#define API_KEY "AIzaSyCm9JsiUtqT1ko0rUSj16RTUUawRms4j84"
+
+// Insert RTDB URLefine the RTDB URL */
+#define DATABASE_URL "https://biometric-attendance-systm-default-rtdb.firebaseio.com/"
+
 #define WIFI_SSID "DreamNetSDA" // enter the wifi address
-#define WIFI_PASSWORD "Daniyal444" // enter it's password  
+#define WIFI_PASSWORD "Daniyal444" // enter it's password
+
+#define isTouchedPin 4
+#define buzzerPin 2
+#define registerationMode 12
+
+
+
+
+// Define Firebase objects~~~~~~~~~~~~~~
+FirebaseData fbdo;
+
+FirebaseAuth auth;
+FirebaseConfig config;
+
+
+unsigned long sendDataPrevMillis = 0;
+int count = 0;
+bool signupOK = false;
 
 uint8_t getFingerprintEnroll(int id);
 
@@ -34,6 +59,8 @@ SoftwareSerial mySerial(12, 13); // 12 - D6 - yellow // 13 - d7 - blue
 const long utcOffsetInSeconds = 3600;
 
 
+// Variable to save USER UID
+String uid;
 
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 
@@ -52,20 +79,54 @@ String id;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
+// Initialize WiFi
+void initWiFi() {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi ..");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print('.');
+    delay(1000);
+  }
+  Serial.println(WiFi.localIP());
+  Serial.println();
+}
+
 
 // One Time Code~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void setup()
 {
-  Serial.begin(9600);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD); // to check for the wifi connection
-  Serial.print("connecting");
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-  }
-  Serial.println("Connected to internet");
-  Serial.println(WiFi.localIP()); // to print the ip address
+  Serial.begin(115200);
 
+  pinMode(isTouchedPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(registerationMode, INPUT);
+
+  // Initialize WiFi
+  initWiFi();
+
+  /* Assign the api key (required) */
+  config.api_key = API_KEY;
+
+  /* Assign the RTDB URL (required) */
+  config.database_url = DATABASE_URL;
+
+
+  /* Sign up */
+  if (Firebase.signUp(&config, &auth, "", "")) {
+    Serial.println("Signed up (ok)");
+    signupOK = true;
+  }
+  else {
+    Serial.printf("%s\n", config.signer.signupError.message.c_str());
+  }
+
+  /* Assign the callback function for the long running token generation task */
+  config.token_status_callback = tokenStatusCallback; //see addons/TokenHelper.h
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  //Firebase ~~~~~~~~~~~~~~~~~END~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
   finger.begin(57600);
   timeClient.begin();
@@ -76,32 +137,52 @@ void setup()
     Serial.println("Did not find fingerprint sensor :(");
     while (1);
   }
+
   Serial.println();
-
-
-  Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH); // initilize the firebase
 }
 
 
 // Repeating Code~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void loop()
 {
-  timeClient.update();
-  //  if (isDeviceActivated()) {
-  //
-  //    //TODO  Make Buzzer on for a second
-  //
-  //    firebase_user = getDataFromFirebase();
-  //
-  //    while (!  getFingerprintEnroll(firebase_user.ID) );
-  //
-  //  }
-  //  delay(8000);
 
-  getFingerprintID();
+  if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 10000 || sendDataPrevMillis == 0)) {
+    sendDataPrevMillis = millis();
+
+    if (digitalRead(isTouchedPin)) {
+
+      tone(buzzerPin, 1000); // Send 1KHz sound signal...
+      delay(500);        // ...for 1 sec
+      noTone(buzzerPin);     // Stop sound...
+
+      timeClient.update();
+
+      if (digitalRead(registerationMode)) {
+
+        tone(buzzerPin, 1000); // Send 1KHz sound signal...
+        delay(50);
+        noTone(buzzerPin);     // Stop sound...
+        tone(buzzerPin, 1000); // Send 1KHz sound signal...
+        delay(50);
+        noTone(buzzerPin);     // Stop sound...
+
+        if (isDeviceActivated()) {
+
+          //TODO  Make Buzzer on for a second
+
+          firebase_user = getDataFromFirebase();
+
+          while (!  getFingerprintEnroll(firebase_user.ID) );
+        }
+      }
+      else {
+        getFingerprintID();
+      }
+    }
+  }
+
+
   delay(50);
-
-
 }
 
 
@@ -109,16 +190,22 @@ void loop()
 
 bool isDeviceActivated() {
 
+  bool isUploaded = false;
+
   // get value
-  String value = Firebase.getString("device/state");
-  id = Firebase.getString("device/id");
+  isUploaded = Firebase.RTDB.getString(&fbdo, "device/state");
+  String value = fbdo.to<const char *>();
+
+  isUploaded = Firebase.RTDB.getString(&fbdo, "device/id");
+  id = fbdo.to<const char *>();
+
   Serial.println("device/state" + String(value));
   Serial.println("device/id" + String(value));
 
-  if (Firebase.failed())   // to find any error in uploading the code
+  if (!isUploaded)   // to find any error in uploading the code
   {
     Serial.print("Failed to get activation record:");
-    Serial.println(Firebase.error());
+    Serial.println(fbdo.errorReason().c_str());
   }
 
   if (value == "true") {
@@ -133,13 +220,18 @@ bool isDeviceActivated() {
 //Getting status from firebase~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 struct firebaseUser getDataFromFirebase() {
 
-  firebase_user.ID = Firebase.getString("users/" + String(id) + "/f_id").toInt();
-  firebase_user.NAME = Firebase.getString("users/" + String(id) + "/name");
+  bool isUploaded = false;
 
-  if (Firebase.failed())   // to find any error in uploading the code
+  isUploaded = Firebase.RTDB.getString(&fbdo, "users/" + String(id) + "/f_id");
+  firebase_user.ID = String(fbdo.to<const char *>()).toInt();
+
+  isUploaded =  Firebase.RTDB.getString(&fbdo, "users/" + String(id) + "/name");
+  firebase_user.NAME = fbdo.to<const char *>();
+
+  if (!isUploaded)  // to find any error in uploading the code
   {
     Serial.print("Failed to get user record:");
-    Serial.println(Firebase.error());
+    Serial.println(fbdo.errorReason().c_str());
   }
 
   return firebase_user;
@@ -148,18 +240,18 @@ struct firebaseUser getDataFromFirebase() {
 //Update status to firebase~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void acknowledgeToFirebase() {
 
-  Firebase.setString("device/state", "false");
-  Firebase.setString("users/" + String(firebase_user.ID) + "/registration_status", String("true")); // update child in firebase database
-  Firebase.setString("users/" + String(firebase_user.ID) + "/last_status", String("false")); // update child in firebase database
+  bool isUploaded = false;
 
-  if (Firebase.failed())   // to find any error in uploading the code
+  isUploaded = Firebase.RTDB.setString(&fbdo, "device/state", "false");
+  isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(firebase_user.ID) + "/registration_status", String("true")); // update child in firebase database
+  isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(firebase_user.ID) + "/last_status", String("false")); // update child in firebase database
+
+  if (!isUploaded)   // to find any error in uploading the code
   {
     Serial.print("Failed to upload record:");
-    Serial.println(Firebase.error());
+    Serial.println(fbdo.errorReason().c_str());
   }
-  Serial.println("sent to online database");
-
-  if (Firebase.success())   // to find any error in uploading the code
+  else   // to find any error in uploading the code
   {
     Serial.print("method(acknowledgeToFirebase) Successfully uploaded");
   }
@@ -171,29 +263,36 @@ void acknowledgeToFirebase() {
 
 void getNameAndMarkAttendance(int f_id) {
 
+  bool isUploaded = false;
+
   Serial.print("Getting data from firebase...");
-  firebase_user.ID = Firebase.getString("users/" + String(f_id) + "/id").toInt();
 
-  firebase_user.NAME = Firebase.getString("users/" + String(f_id) + "/name");
+  isUploaded =  Firebase.RTDB.getString(&fbdo, "users/" + String(f_id) + "/id");
+  firebase_user.ID = String(fbdo.to<const char *>()).toInt();
 
-  String lastStatus = Firebase.getString("users/" + String(f_id) + "/last_status"); // update child in firebase database
+  isUploaded =  Firebase.RTDB.getString(&fbdo, "users/" + String(f_id) + "/name");
+  firebase_user.NAME = fbdo.to<const char *>();
+
+
+  isUploaded = Firebase.RTDB.getString(&fbdo, "users/" + String(f_id) + "/last_status");
+  String lastStatus = fbdo.to<const char *>();
 
   if (lastStatus == "false" || lastStatus == "checkout") {
-    Firebase.setString("users/" + String(f_id) + "/last_status", String("checkin")); // update child in firebase database
-    Firebase.pushString("attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkin}");
+    isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(f_id) + "/last_status", String("checkin")); // update child in firebase database
+    isUploaded = Firebase.RTDB.pushString(&fbdo, "attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkin}");
   }
   else if (lastStatus == "true" || lastStatus == "checkin") {
-    Firebase.setString("users/" + String(f_id) + "/last_status", String("checkout")); // update child in firebase database
-    Firebase.pushString("attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkout}");
+    isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(f_id) + "/last_status", String("checkout")); // update child in firebase database
+    isUploaded = Firebase.RTDB.pushString(&fbdo, "attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkout}");
   }
   else {
     Serial.print("method(getNameAndMarkAttendance) Error to get conditions");
   }
 
-  if (Firebase.failed())   // to find any error in uploading the code
+  if (!isUploaded)   // to find any error in uploading the code
   {
     Serial.print("method(getNameAndMarkAttendance) Failed to get user record:");
-    Serial.println(Firebase.error());
+    Serial.println(fbdo.errorReason().c_str());
   }
 
 }
