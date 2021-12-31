@@ -23,7 +23,7 @@
 #include <SoftwareSerial.h> // for serial communication
 
 #define FIREBASE_HOST "biometric-attendance-systm-default-rtdb.firebaseio.com"  // app database
-#define FIREBASE_AUTH "VwRs9tusGj66mrofIDbwqBNYfAvf50xuQjNd7raT" // copy the secret code from the service account settings in firebase
+#define FIREBASE_AUTH "bJhOeblIKLSUWKr1MKrbMV5sKbYB6wrwSq1El8TC" // copy the secret code from the service account settings in firebase
 #define WIFI_SSID "DreamNetSDA" // enter the wifi address
 #define WIFI_PASSWORD "Daniyal444" // enter it's password  
 
@@ -182,9 +182,12 @@ void getNameAndMarkAttendance(int f_id) {
     Firebase.setString("users/" + String(f_id) + "/last_status", String("checkin")); // update child in firebase database
     Firebase.pushString("attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkin}");
   }
-  else {
+  else if (lastStatus == "true" || lastStatus == "checkin") {
     Firebase.setString("users/" + String(f_id) + "/last_status", String("checkout")); // update child in firebase database
     Firebase.pushString("attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkout}");
+  }
+  else {
+    Serial.print("method(getNameAndMarkAttendance) Error to get conditions");
   }
 
   if (Firebase.failed())   // to find any error in uploading the code
