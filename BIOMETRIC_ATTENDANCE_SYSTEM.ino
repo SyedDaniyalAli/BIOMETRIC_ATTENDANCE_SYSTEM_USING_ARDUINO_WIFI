@@ -7,6 +7,13 @@
 #include <Adafruit_Fingerprint.h> // for connecting the fingerprint sensor 
 #include <SoftwareSerial.h> // for serial communication
 
+#include <Wire.h> // Library for I2C communication
+#include <LiquidCrystal_I2C.h> // Library for LCD
+
+// Wiring: SDA pin is connected to A4 and SCL pin to A5.
+// Connect to LCD via I2C, default address 0x27 (A0-A2 not jumpered)
+LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4) for 20x4 LCD.
+
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <Arduino.h>
@@ -16,6 +23,10 @@
 #include <ESP8266WiFi.h>
 #endif
 #include <Firebase_ESP_Client.h>
+
+//For LCD Display
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 
 // Provide the token generation process info.
@@ -34,9 +45,10 @@
 #define WIFI_SSID "DreamNetSDA" // enter the wifi address
 #define WIFI_PASSWORD "Daniyal444" // enter it's password
 
-#define isTouchedPin 4
-#define buzzerPin 2
-#define registerationMode 12
+#define isTouchedPin D3
+#define registerationMode D5
+#define buzzerPin D6
+
 
 
 
@@ -49,12 +61,11 @@ FirebaseConfig config;
 
 
 unsigned long sendDataPrevMillis = 0;
-int count = 0;
 bool signupOK = false;
 
 uint8_t getFingerprintEnroll(int id);
 
-SoftwareSerial mySerial(12, 13); // 12 - D6 - yellow // 13 - d7 - blue
+SoftwareSerial mySerial(D7, D8); // 12 - D6 - yellow // 13 - d7 - white
 
 const long utcOffsetInSeconds = 3600;
 
@@ -83,10 +94,19 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 void initWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi ..");
+
+  lcd.clear();
+  lcd.print("Connecting WiFi");
+
+
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print('.');
     delay(1000);
   }
+
+  lcd.clear();
+  lcd.print("WiFi Connected");
+
   Serial.println(WiFi.localIP());
   Serial.println();
 }
@@ -96,10 +116,19 @@ void initWiFi() {
 void setup()
 {
   Serial.begin(115200);
+  // Initiate the LCD:
+  lcd.init();
+  lcd.backlight();
+
+  lcd.clear();
+  lcd.print(" Bio-Attendance");
+  delay(2500);
+
 
   pinMode(isTouchedPin, INPUT);
   pinMode(buzzerPin, OUTPUT);
   pinMode(registerationMode, INPUT);
+  noTone(buzzerPin);
 
   // Initialize WiFi
   initWiFi();
@@ -110,14 +139,18 @@ void setup()
   /* Assign the RTDB URL (required) */
   config.database_url = DATABASE_URL;
 
-
   /* Sign up */
   if (Firebase.signUp(&config, &auth, "", "")) {
     Serial.println("Signed up (ok)");
+    lcd.clear();
+    lcd.print("Device is Ready");
+
     signupOK = true;
   }
   else {
     Serial.printf("%s\n", config.signer.signupError.message.c_str());
+    lcd.clear();
+    lcd.print(" No Internet");
   }
 
   /* Assign the callback function for the long running token generation task */
@@ -135,6 +168,9 @@ void setup()
     Serial.println("Found fingerprint sensor!");  // to check if the finger print sensor is avaible
   } else {
     Serial.println("Did not find fingerprint sensor :(");
+    lcd.clear();
+    lcd.print(" No F_Sensor");
+
     while (1);
   }
 
@@ -145,30 +181,28 @@ void setup()
 // Repeating Code~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void loop()
 {
+  timeClient.update();
 
-  if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 10000 || sendDataPrevMillis == 0)) {
+  if (Firebase.ready() && signupOK && (millis() - sendDataPrevMillis > 200 || sendDataPrevMillis == 0)) {
     sendDataPrevMillis = millis();
 
-    if (digitalRead(isTouchedPin)) {
+    if (digitalRead(isTouchedPin) == LOW) {
 
-      tone(buzzerPin, 1000); // Send 1KHz sound signal...
-      delay(500);        // ...for 1 sec
-      noTone(buzzerPin);     // Stop sound...
+      if (digitalRead(registerationMode) == HIGH)
+      {
+        lcd.clear();
+        lcd.print("Place Finger");
+        lcd.setCursor(1, 1);
+        lcd.print("Tightly..");
+      }
 
-      timeClient.update();
+      if (digitalRead(registerationMode) == LOW) {
 
-      if (digitalRead(registerationMode)) {
-
-        tone(buzzerPin, 1000); // Send 1KHz sound signal...
-        delay(50);
-        noTone(buzzerPin);     // Stop sound...
-        tone(buzzerPin, 1000); // Send 1KHz sound signal...
-        delay(50);
-        noTone(buzzerPin);     // Stop sound...
+        tone(buzzerPin, 1000, 100); // Send 1KHz sound signal...
+        delay(180);
+        tone(buzzerPin, 1000, 100); // Send 1KHz sound signal...
 
         if (isDeviceActivated()) {
-
-          //TODO  Make Buzzer on for a second
 
           firebase_user = getDataFromFirebase();
 
@@ -190,6 +224,9 @@ void loop()
 
 bool isDeviceActivated() {
 
+  lcd.clear();
+  lcd.print("Downloading Data");
+
   bool isUploaded = false;
 
   // get value
@@ -199,19 +236,25 @@ bool isDeviceActivated() {
   isUploaded = Firebase.RTDB.getString(&fbdo, "device/id");
   id = fbdo.to<const char *>();
 
-  Serial.println("device/state" + String(value));
-  Serial.println("device/id" + String(value));
+  Serial.println("device/state: " + String(value));
+  Serial.println("device/id: " + String(value));
 
   if (!isUploaded)   // to find any error in uploading the code
   {
     Serial.print("Failed to get activation record:");
     Serial.println(fbdo.errorReason().c_str());
+    lcd.clear();
+    lcd.print("No Internet.");
   }
 
   if (value == "true") {
+    lcd.clear();
+    lcd.print("Data Downloaded");
     return true;
   }
   else {
+    lcd.clear();
+    lcd.print("No Record Found");
     return false;
   }
 
@@ -219,6 +262,9 @@ bool isDeviceActivated() {
 
 //Getting status from firebase~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 struct firebaseUser getDataFromFirebase() {
+
+  lcd.clear();
+  lcd.print("Getting Record");
 
   bool isUploaded = false;
 
@@ -232,6 +278,8 @@ struct firebaseUser getDataFromFirebase() {
   {
     Serial.print("Failed to get user record:");
     Serial.println(fbdo.errorReason().c_str());
+    lcd.clear();
+    lcd.print("Internet Error");
   }
 
   return firebase_user;
@@ -246,14 +294,19 @@ void acknowledgeToFirebase() {
   isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(firebase_user.ID) + "/registration_status", String("true")); // update child in firebase database
   isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(firebase_user.ID) + "/last_status", String("false")); // update child in firebase database
 
+
   if (!isUploaded)   // to find any error in uploading the code
   {
     Serial.print("Failed to upload record:");
     Serial.println(fbdo.errorReason().c_str());
+    lcd.clear();
+    lcd.print("Failed to Upload");
   }
   else   // to find any error in uploading the code
   {
     Serial.print("method(acknowledgeToFirebase) Successfully uploaded");
+    lcd.clear();
+    lcd.print("User Registered");
   }
 
 }
@@ -266,6 +319,8 @@ void getNameAndMarkAttendance(int f_id) {
   bool isUploaded = false;
 
   Serial.print("Getting data from firebase...");
+  lcd.clear();
+  lcd.print("Getting Data..");
 
   isUploaded =  Firebase.RTDB.getString(&fbdo, "users/" + String(f_id) + "/id");
   firebase_user.ID = String(fbdo.to<const char *>()).toInt();
@@ -280,18 +335,30 @@ void getNameAndMarkAttendance(int f_id) {
   if (lastStatus == "false" || lastStatus == "checkout") {
     isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(f_id) + "/last_status", String("checkin")); // update child in firebase database
     isUploaded = Firebase.RTDB.pushString(&fbdo, "attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkin}");
+    lcd.clear();
+    lcd.print("Welcome " + String(firebase_user.NAME));
+    lcd.setCursor(1, 4);
+    lcd.print("Check-In");
   }
   else if (lastStatus == "true" || lastStatus == "checkin") {
     isUploaded = Firebase.RTDB.setString(&fbdo, "users/" + String(f_id) + "/last_status", String("checkout")); // update child in firebase database
     isUploaded = Firebase.RTDB.pushString(&fbdo, "attendance/" + String(firebase_user.ID) + "/", "{timestamp:" + String(timeClient.getEpochTime()) + ",status:checkout}");
+    lcd.clear();
+    lcd.print("Bye " + String(firebase_user.NAME));
+    lcd.setCursor(1, 4);
+    lcd.print("Check-Out");
   }
   else {
     Serial.print("method(getNameAndMarkAttendance) Error to get conditions");
+    lcd.clear();
+    lcd.print("Condition Error");
   }
 
   if (!isUploaded)   // to find any error in uploading the code
   {
     Serial.print("method(getNameAndMarkAttendance) Failed to get user record:");
+    lcd.clear();
+    lcd.print("Network Error");
     Serial.println(fbdo.errorReason().c_str());
   }
 
@@ -307,18 +374,28 @@ uint8_t getFingerprintID() {
   switch (p) {
     case FINGERPRINT_OK:
       Serial.println("Image taken");
+      lcd.clear();
+      lcd.print("Image taken");
       break;
     case FINGERPRINT_NOFINGER:
       Serial.println("No finger detected");
+      lcd.clear();
+      lcd.print(" Put Finger");
       return p;
     case FINGERPRINT_PACKETRECIEVEERR:
       Serial.println("Communication error");
+      lcd.clear();
+      lcd.print("Comm7_Error");
       return p;
     case FINGERPRINT_IMAGEFAIL:
       Serial.println("Imaging error");
+      lcd.clear();
+      lcd.print("Imaging error");
       return p;
     default:
       Serial.println("Unknown error");
+      lcd.clear();
+      lcd.print("Unknown Error");
       return p;
   }
 
@@ -328,21 +405,33 @@ uint8_t getFingerprintID() {
   switch (p) {
     case FINGERPRINT_OK:
       Serial.println("Image converted");
+      lcd.clear();
+      lcd.print("Image converted");
       break;
     case FINGERPRINT_IMAGEMESS:
       Serial.println("Image too messy");
+      lcd.clear();
+      lcd.print("Too messy");
       return p;
     case FINGERPRINT_PACKETRECIEVEERR:
       Serial.println("Communication error");
+      lcd.clear();
+      lcd.print("Comm8_Error");
       return p;
     case FINGERPRINT_FEATUREFAIL:
       Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Finding Error");
       return p;
     case FINGERPRINT_INVALIDIMAGE:
       Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Invalid Img");
       return p;
     default:
       Serial.println("Unknown error");
+      lcd.clear();
+      lcd.print("Unknown Error");
       return p;
   }
 
@@ -350,19 +439,29 @@ uint8_t getFingerprintID() {
   p = finger.fingerSearch();
   if (p == FINGERPRINT_OK) {
     Serial.println("Found a print match!");
+    lcd.clear();
+    lcd.print("Print Matched");
   } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
     Serial.println("Communication error");
+    lcd.clear();
+    lcd.print("Comm9_Error");
     return p;
   } else if (p == FINGERPRINT_NOTFOUND) {
     Serial.println("Did not find a match");
+    lcd.clear();
+    lcd.print("No Matched");
     return p;
   } else {
     Serial.println("Unknown error");
+    lcd.clear();
+    lcd.print("Unknown Error");
     return p;
   }
 
   // found a match!
   Serial.print("Found ID #"); Serial.print(finger.fingerID);
+  lcd.clear();
+  lcd.print("Found ID: " + String(finger.fingerID));
   Serial.print(" with confidence of "); Serial.println(finger.confidence);
 
   getNameAndMarkAttendance(finger.fingerID);
@@ -386,6 +485,8 @@ int getFingerprintIDez() {
 
   // found a match!
   Serial.print("Found ID #"); Serial.print(finger.fingerID);
+  lcd.clear();
+  lcd.print("Found ID: " + String(finger.fingerID));
   Serial.print(" with confidence of "); Serial.println(finger.confidence);
   return finger.fingerID;
 }
@@ -398,23 +499,36 @@ int getFingerprintIDez() {
 uint8_t getFingerprintEnroll(int id) {
   uint8_t p = -1;
   Serial.println("Waiting for valid finger to enroll");
+  lcd.clear();
+  lcd.print("Wait to Enroll..");
+
   while (p != FINGERPRINT_OK) {
     p = finger.getImage();
     switch (p) {
       case FINGERPRINT_OK:
         Serial.println("Image taken");
+        lcd.clear();
+        lcd.print("Image taken");
         break;
       case FINGERPRINT_NOFINGER:
         Serial.println(".");
+        lcd.clear();
+        lcd.print("Put Finger..");
         break;
       case FINGERPRINT_PACKETRECIEVEERR:
         Serial.println("Communication error");
+        lcd.clear();
+        lcd.print(" Comm_Error");
         break;
       case FINGERPRINT_IMAGEFAIL:
         Serial.println("Imaging error");
+        lcd.clear();
+        lcd.print("Imaging Error");
         break;
       default:
         Serial.println("Unknown error");
+        lcd.clear();
+        lcd.print("Unknown Error");
         break;
     }
   }
@@ -425,21 +539,33 @@ uint8_t getFingerprintEnroll(int id) {
   switch (p) {
     case FINGERPRINT_OK:
       Serial.println("Image converted");
+      lcd.clear();
+      lcd.print("Image converted");
       break;
     case FINGERPRINT_IMAGEMESS:
       Serial.println("Image too messy");
+      lcd.clear();
+      lcd.print("Too Messy..");
       return p;
     case FINGERPRINT_PACKETRECIEVEERR:
       Serial.println("Communication error");
+      lcd.clear();
+      lcd.print("Comm2_Error");
       return p;
     case FINGERPRINT_FEATUREFAIL:
       Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Feature_Error");
       return p;
     case FINGERPRINT_INVALIDIMAGE:
       Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("No Features");
       return p;
     default:
       Serial.println("Unknown error");
+      lcd.clear();
+      lcd.print("Unknown Error");
       return p;
   }
 
@@ -452,23 +578,35 @@ uint8_t getFingerprintEnroll(int id) {
 
   p = -1;
   Serial.println("Place same finger again");  // to improve the security and confidence in the finger print measurement
+  lcd.clear();
+  lcd.print("Put Same Finger");
   while (p != FINGERPRINT_OK) {
     p = finger.getImage();
     switch (p) {
       case FINGERPRINT_OK:
         Serial.println("Image taken");
+        lcd.clear();
+        lcd.print("Image taken");
         break;
       case FINGERPRINT_NOFINGER:
         Serial.println(".");
+        lcd.clear();
+        lcd.print("Put Finger..");
         break;
       case FINGERPRINT_PACKETRECIEVEERR:
         Serial.println("Communication error");
+        lcd.clear();
+        lcd.print("Comm3_Error");
         break;
       case FINGERPRINT_IMAGEFAIL:
         Serial.println("Imaging error");
+        lcd.clear();
+        lcd.print("Imaging Error");
         break;
       default:
         Serial.println("Unknown error");
+        lcd.clear();
+        lcd.print("Unknown error");
         break;
     }
   }
@@ -479,21 +617,33 @@ uint8_t getFingerprintEnroll(int id) {
   switch (p) {
     case FINGERPRINT_OK:
       Serial.println("Image converted");
+      lcd.clear();
+      lcd.print("Image converted");
       break;
     case FINGERPRINT_IMAGEMESS:
       Serial.println("Image too messy");
+      lcd.clear();
+      lcd.print("Too messy");
       return p;
     case FINGERPRINT_PACKETRECIEVEERR:
       Serial.println("Communication error");
+      lcd.clear();
+      lcd.print("Comm4_Error");
       return p;
     case FINGERPRINT_FEATUREFAIL:
       Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Put Finger.");
       return p;
     case FINGERPRINT_INVALIDIMAGE:
       Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Put Finger..");
       return p;
     default:
       Serial.println("Unknown error");
+      lcd.clear();
+      lcd.print("Unknown Error");
       return p;
   }
 
@@ -502,14 +652,22 @@ uint8_t getFingerprintEnroll(int id) {
   p = finger.createModel();
   if (p == FINGERPRINT_OK) {
     Serial.println("Prints matched!");     // got a match and your ready to go
+    lcd.clear();
+    lcd.print("Print Matched");
   } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
     Serial.println("Communication error");
+    lcd.clear();
+    lcd.print("Comm5_Error");
     return p;
   } else if (p == FINGERPRINT_ENROLLMISMATCH) {
     Serial.println("Fingerprints did not match");
+    lcd.clear();
+    lcd.print("F_Not Matched");
     return p;
   } else {
     Serial.println("Unknown error");
+    lcd.clear();
+    lcd.print("Unknown Error");
     return p;
   }
 
@@ -519,17 +677,27 @@ uint8_t getFingerprintEnroll(int id) {
   p = finger.storeModel(id);
   if (p == FINGERPRINT_OK) {
     Serial.println("Stored!");
+    lcd.clear();
+    lcd.print("Saved to Local");
   } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
     Serial.println("Communication error");
+    lcd.clear();
+    lcd.print("Comm6_Error");
     return p;
   } else if (p == FINGERPRINT_BADLOCATION) {
     Serial.println("Could not store in that location");
+    lcd.clear();
+    lcd.print("Location Error");
     return p;
   } else if (p == FINGERPRINT_FLASHERR) {
     Serial.println("Error writing to flash");
+    lcd.clear();
+    lcd.print("Writing Error");
     return p;
   } else {
     Serial.println("Unknown error");
+    lcd.clear();
+    lcd.print("Unknown Error");
     return p;
   }
 
