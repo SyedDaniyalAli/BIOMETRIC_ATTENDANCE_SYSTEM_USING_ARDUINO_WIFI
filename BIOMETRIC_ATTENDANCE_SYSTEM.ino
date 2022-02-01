@@ -376,6 +376,7 @@ uint8_t getFingerprintID() {
       Serial.println("Image taken");
       lcd.clear();
       lcd.print("Image taken");
+      tone(buzzerPin, 1000, 1000); // Send 1KHz sound signal...
       break;
     case FINGERPRINT_NOFINGER:
       Serial.println("No finger detected");
@@ -671,8 +672,6 @@ uint8_t getFingerprintEnroll(int id) {
     return p;
   }
 
-  //When model is registered~~~~~~~~~~~~~~~~~~~~~~~
-  acknowledgeToFirebase();
 
   p = finger.storeModel(id);
   if (p == FINGERPRINT_OK) {
@@ -701,5 +700,7 @@ uint8_t getFingerprintEnroll(int id) {
     return p;
   }
 
+  //When model is registered~~~~~~~~~~~~~~~~~~~~~~~
+  acknowledgeToFirebase();
 
 }
