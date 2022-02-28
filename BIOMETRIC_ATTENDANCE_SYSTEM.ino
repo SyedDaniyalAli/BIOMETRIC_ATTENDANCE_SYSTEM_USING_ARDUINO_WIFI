@@ -450,7 +450,8 @@ uint8_t getFingerprintID() {
   } else if (p == FINGERPRINT_NOTFOUND) {
     Serial.println("Did not find a match");
     lcd.clear();
-    lcd.print("No Matched");
+    lcd.print("Not Registered");
+    delay(2000);
     return p;
   } else {
     Serial.println("Unknown error");
